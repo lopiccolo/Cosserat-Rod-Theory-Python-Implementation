@@ -614,3 +614,34 @@ def CMA_es(func, dim, x0=None, sigma0=1.0, popsize=50,
             gen,
             np.array(bestcoords))
 
+# ============================================================================
+# Gait optimization objective: maximize forward COM velocity
+# ============================================================================
+
+beta_max = 50.0       # Nm
+lambda_min = 0.1      # m 
+lambda_max = 1.0      # m
+
+def gait_objective(x):
+    """
+    x: array-like, shape (5,)
+       x[0:4] = β1..β4
+       x[4]   = λ_m
+    Returns scalar cost to minimize = -average forward velocity.
+    """
+    x = np.asarray(x, dtype=float)
+
+    # Extract and clip parameters
+    beta_inner = np.clip(x[:4], 0, beta_max)
+    lambda_m = np.clip(x[4], lambda_min, lambda_max)
+
+    v_avg = simulate_flagellum(beta_inner, lambda_m,
+                               n_relax_cycles=2, n_meas_cycles=1)
+
+    # If something goes crazy / unstable, penalize heavily
+    if not np.isfinite(v_avg):
+        return 1e6
+    
+    v_abs=abs(v_avg)
+    
+    return -v_abs  # maximize v_avg by minimizing -v_avg
