@@ -469,3 +469,148 @@ def simulate_flagellum(beta_inner, lambda_m,
         return v_avg, True
     else:
         return v_avg
+
+# ============================================================================
+# CMA-ES 
+# ============================================================================
+
+rng = np.random.default_rng()
+
+def CMA_es(func, dim, x0=None, sigma0=1.0, popsize=50,
+           maxgens=100, tol=1e-12):
+    """
+    CMA-ES minimizing func(x)
+
+    Returns:
+        best_x                 : best solution found
+        best_val               : best cost (minimum func value)
+        global_best_cost_hist  : best cost seen up to each generation
+        gen_best_cost_hist     : best cost in each generation
+        gen_mean_cost_hist     : mean cost in each generation
+        sighist                : step-size history
+        ngen                   : number of generations performed
+        bestcoords             : mean vector m at each generation
+    """
+    if x0 is None:
+        x0 = np.zeros(dim)
+    m = np.array(x0, dtype=float)
+
+    C = np.eye(dim)
+    lam = popsize
+    mu = lam // 2
+    sigma = sigma0
+
+    # recombination weights
+    raw_w = np.log(mu + 0.5) - np.log(np.arange(1, mu + 1))
+    w = raw_w / np.sum(raw_w)
+    mu_eff = 1.0 / np.sum(w**2)
+
+    # strategy parameters
+    c_c = 4.0 / dim
+    c_sig = 4.0 / dim
+    c1 = 2.0 / (dim**2)
+    c_mu = min(1.0 - c1, mu_eff / (dim**2))
+    d_sig = 1.0 + np.sqrt(mu_eff / dim)
+    chi_n = np.sqrt(dim) * (1 - 1/(4*dim) + 1/(21*dim**2))
+
+    # evolution paths
+    p_c = np.zeros(dim)
+    p_sig = np.zeros(dim)
+
+    # histories
+    sighist = []
+    bestcoords = []
+    global_best_cost_hist = []
+    gen_best_cost_hist = []
+    gen_mean_cost_hist = []
+
+    gen = 0
+    best_x = m.copy()
+    best_val = np.inf
+
+    # progress tracking
+    prog_step = max(1, maxgens // 20)  # 5% increments
+    next_prog = prog_step
+
+    while gen < maxgens:
+        # sampling
+        eigvals, B = np.linalg.eigh(C)
+        eigvals = np.maximum(eigvals, 1e-20)
+        D = np.sqrt(eigvals)
+        Z = rng.standard_normal((lam, dim))
+        Y = (Z * D) @ B.T
+        X = m + sigma * Y
+
+        # evaluate fitness (costs)
+        fitness = np.array([func(x) for x in X])
+        idx = np.argsort(fitness)
+        xsort, ysort = X[idx], Y[idx]
+
+        # per-generation stats
+        gen_best_cost = fitness[idx[0]]
+        gen_mean_cost = float(np.mean(fitness))
+        gen_best_cost_hist.append(gen_best_cost)
+        gen_mean_cost_hist.append(gen_mean_cost)
+
+        # global best so far
+        if gen == 0:
+            global_best_cost = gen_best_cost
+        else:
+            global_best_cost = min(global_best_cost_hist[-1], gen_best_cost)
+        global_best_cost_hist.append(global_best_cost)
+
+        if gen_best_cost < best_val:
+            best_val = gen_best_cost
+            best_x = xsort[0].copy()
+
+        # recombination
+        sel_y = ysort[:mu]
+        y_w = np.sum(w[:, None] * sel_y, axis=0)
+        m_new = m + sigma * y_w
+        bestcoords.append(m_new.copy())
+
+        # sigma path
+        inv_sqr_C = B @ np.diag(1.0 / D) @ B.T
+        p_sig = (1 - c_sig) * p_sig + np.sqrt(c_sig*(2 - c_sig)*mu_eff) * (inv_sqr_C @ y_w)
+
+        # hsig
+        norm_p_sig = np.linalg.norm(p_sig)
+        threshold = (1.4 + 2/(dim + 1)) * chi_n
+        denom = np.sqrt(1 - (1 - c_sig)**(2 * (gen + 1)))
+        hsig = 1 if norm_p_sig / denom < threshold else 0
+
+        # p_c path
+        p_c = (1 - c_c) * p_c + hsig * np.sqrt(c_c*(2 - c_c)*mu_eff) * y_w
+
+        # C update
+        rankmu_term = np.zeros_like(C)
+        for i in range(mu):
+            yi = sel_y[i]
+            rankmu_term += w[i] * np.outer(yi, yi)
+
+        C = (1 - c1 - c_mu) * C \
+            + c1 * (np.outer(p_c, p_c) + hsig * c_c * (2 - c_c) * C) \
+            + c_mu * rankmu_term
+
+        # sigma update
+        sigma = sigma * np.exp((c_sig / d_sig) * (norm_p_sig / chi_n - 1.0))
+
+        m = m_new
+        sighist.append(sigma)
+
+        # progress print
+        if gen >= next_prog or gen == maxgens - 1:
+            pct = 100.0 * gen / maxgens
+            print(f"Gen {gen:4d} / {maxgens}  ({pct:5.1f}%) | best f = {best_val:.4e}")
+            next_prog += prog_step
+
+        gen += 1
+
+    return (best_x, best_val,
+            np.array(global_best_cost_hist),
+            np.array(gen_best_cost_hist),
+            np.array(gen_mean_cost_hist),
+            np.array(sighist),
+            gen,
+            np.array(bestcoords))
+
