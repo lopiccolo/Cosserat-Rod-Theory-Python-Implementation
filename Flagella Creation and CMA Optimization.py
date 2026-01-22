@@ -645,3 +645,59 @@ def gait_objective(x):
     v_abs=abs(v_avg)
     
     return -v_abs  # maximize v_avg by minimizing -v_avg
+
+# ================================================================
+# Run CMA-ES for gait optimization
+# ================================================================
+
+dim = 5  # [β1, β2, β3, β4, λ_m]
+
+# Initial guess: moderate torques, wavelength ~0.4 m
+x0 = np.array([10.0, 10.0, 10.0, 10.0, 0.4])
+
+(best_x, best_val,
+ global_best_cost_hist,
+ gen_best_cost_hist,
+ gen_mean_cost_hist,
+ sighist, ngen, bestcoords) = CMA_es(
+    gait_objective,
+    dim=dim,
+    x0=x0,
+    sigma0=10.0,
+    popsize=10,
+    maxgens=20,
+    tol=1e-6
+)
+
+# Extract optimal parameters
+beta_opt   = np.clip(best_x[:4], 0, beta_max)
+lambda_opt = np.clip(best_x[4],  lambda_min, lambda_max)
+v_opt      = -best_val  # cost = -v_avg
+
+print("Optimized β (Nm):", beta_opt)
+print("Optimized λ_m (m):", lambda_opt)
+print("Estimated avg forward velocity v_opt (m/s):", v_opt)
+
+# -------------------------
+# Plotting
+# -------------------------
+
+gens = np.arange(len(global_best_cost_hist))
+
+# Convert costs (-v) back to fitness f = v
+f_best_overall = -global_best_cost_hist   # best solution overall
+f_best_gen     = -gen_best_cost_hist      # best in each generation
+f_mean_gen     = -gen_mean_cost_hist      # mean in each generation
+
+plt.figure(figsize=(6, 4))
+plt.plot(gens, f_best_overall, 'b-', label='best solution (overall)')
+plt.plot(gens, f_best_gen,     'r-', label='best in generation')
+plt.plot(gens, f_mean_gen,     'k--', label='mean generation value')
+
+plt.xlabel('Generation')
+plt.ylabel('f = v_fwd_max (m/s)')
+plt.title('Evolution of fitness (CMA-ES)')
+plt.grid(alpha=0.3)
+plt.legend()
+plt.tight_layout()
+plt.show()
